@@ -40,25 +40,30 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <graph_core/plugins/samplers/sampler_base_plugin.h>
 #include <graph_core/plugins/collision_checkers/collision_checker_base_plugin.h>
 #include <graph_core/plugins/solvers/tree_solver_plugin.h>
-#include <graph_core/plugins/goal_cost_functions/goal_cost_function_base_plugin.h>
-
+#include <graph_core/plugins/metrics/goal_cost_function_base_plugin.h>
+#include <moveit_collision_checker/plugins/collision_checkers/moveit_collision_checker_base_plugin.h>
 #include <graph_display/graph_display.h>
+
+#include <cnr_class_loader/multi_library_class_loader.hpp>
 
 #include <fstream>
 #include <iostream>
 
 
-namespace pathplan {
-namespace dirrt_star {
+namespace graph {
+namespace planner {
 
-class MultigoalPlanner: public planning_interface::PlanningContext
+class GraphPlanner: public planning_interface::PlanningContext
 {
 public:
-  MultigoalPlanner ( const std::string& name,
-                const std::string& group,
-                const moveit::core::RobotModelConstPtr& model
-              );
+  GraphPlanner ( const std::string& name,
+                     const std::string& group,
+                     const moveit::core::RobotModelConstPtr& model,
+                     const cnr_logger::TraceLoggerPtr& logger
+                     );
 
+
+  bool init();
 
   virtual bool solve(planning_interface::MotionPlanResponse& res) override;
   virtual bool solve(planning_interface::MotionPlanDetailedResponse& res) override;
@@ -76,9 +81,9 @@ protected:
   moveit::core::RobotModelConstPtr robot_model_;
   //planning_scene::PlanningSceneConstPtr pl
   ros::NodeHandle m_nh;
-//  std::shared_ptr<pathplan::Display> display;
+  std::shared_ptr<graph::display::Display> display_;
 
-  ros::WallDuration m_max_refining_time;
+  graph_duration m_max_refining_time;
   ros::CallbackQueue m_queue;
 
   unsigned int m_dof;
@@ -86,12 +91,13 @@ protected:
   Eigen::VectorXd m_lb;
   Eigen::VectorXd m_ub;
   Eigen::VectorXd m_max_speed_;
+  Eigen::VectorXd m_scale;
   std::string group_;
   bool display_flag_=false;
   bool display_tree_=false;
-  double display_tree_period_=1.0;
+  graph_duration display_tree_period_;
 
-  graph::core::CollisionCheckerPtr checker_;
+  graph::collision_check::MoveitCollisionCheckerPtr checker_;
   graph::core::SamplerPtr sampler_;
   graph::core::TreeSolverPtr solver_;
   graph::core::MetricsPtr metrics_;
@@ -109,6 +115,12 @@ protected:
   bool hamp_=false;
 
 
+  cnr_logger::TraceLoggerPtr logger_;
+  std::string parameter_namespace_;
+  std::string checker_name_;
+  std::string sampler_name_;
+
+  cnr_class_loader::MultiLibraryClassLoader loader_;
 
 };
 

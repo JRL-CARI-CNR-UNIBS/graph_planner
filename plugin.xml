@@ -1,7 +1,7 @@
-<library path="libdirrt_star">
-  <class name="pathplan/DIRRTStar" type="pathplan::dirrt_star::PathPlanerManager" base_class_type="planning_interface::PlannerManager">
+<library path="libgraph_planner">
+  <class name="cari/planner" type="graph::planner::GraphPlannerManager" base_class_type="planning_interface::PlannerManager">
     <description>
-      DIRRT Planner Manager
+      CARI Motion Planner Manager
     </description>
   </class>
 </library>

@@ -30,9 +30,10 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <moveit/planning_interface/planning_interface.h>
 #include <graph_planner/graph_planner.h>
 
-namespace pathplan {
-namespace dirrt_star {
-class PathPlanerManager : public planning_interface::PlannerManager
+namespace graph {
+namespace planner {
+
+class GraphPlannerManager : public planning_interface::PlannerManager
 {
 public:
   virtual bool initialize(const robot_model::RobotModelConstPtr& model, const std::string& ns) override;
@@ -60,9 +61,13 @@ public:
 protected:
   ros::NodeHandle m_nh;
 
-  std::map< std::string, std::shared_ptr<planning_interface::PlanningContext>> m_planners;
+  std::map< std::string, std::shared_ptr<GraphPlanner>> m_planners;
   moveit::core::RobotModelConstPtr m_robot_model;
   std::string m_default_planner_config;
+
+  cnr_logger::TraceLoggerPtr logger_;
+
+  std::string parameter_namespace_;
 };
 
 //

@@ -28,10 +28,10 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <graph_planner/graph_planner_manager.h>
 
 #include <pluginlib/class_list_macros.h>
-PLUGINLIB_EXPORT_CLASS(pathplan::dirrt_star::PathPlanerManager, planning_interface::PlannerManager)
+PLUGINLIB_EXPORT_CLASS(graph::planner::GraphPlannerManager, planning_interface::PlannerManager)
 
-namespace pathplan {
-namespace dirrt_star {
+namespace graph {
+namespace planner {
 
 XmlRpc::XmlRpcValue inheritConfig(ros::NodeHandle& nh,const std::string& config_name)
 {
@@ -60,49 +60,90 @@ XmlRpc::XmlRpcValue inheritConfig(ros::NodeHandle& nh,const std::string& config_
   return config;
 }
 
-bool PathPlanerManager::initialize(const moveit::core::RobotModelConstPtr& model, const std::string& ns)
+bool GraphPlannerManager::initialize(const moveit::core::RobotModelConstPtr& model, const std::string& ns)
 {
 
-  std::map<std::string,std::string> planner_map;
+  std::string package_name="graph_planner";
+  std::string package_path = ros::package::getPath(package_name);
+  std::string logger_file="config/logger_param.yaml";
+  cnr_logger::TraceLoggerPtr tmp_logger = std::make_shared<cnr_logger::TraceLogger>("graph_planner",package_path+"/"+logger_file);
+
+  CNR_INFO(tmp_logger,"Creating logger for this scene");
+
+  parameter_namespace_=ns;
+
+  if(not graph::core::get_param(tmp_logger,parameter_namespace_,"logger_param_file",logger_file))
+  {
+    CNR_ERROR(tmp_logger,"logger_param_file config not set");
+    return false;
+  }
+
+  if(not graph::core::get_param(tmp_logger,parameter_namespace_,"package_name",package_name))
+  {
+    CNR_ERROR(tmp_logger,"package_name config not set");
+    return false;
+  }
+
+  package_path = ros::package::getPath(package_name);
+
+  CNR_INFO(tmp_logger,"creating logger " << package_name << " using config from "<<package_path+"/"+logger_file);
+  logger_ = std::make_shared<cnr_logger::TraceLogger>(package_name,package_path+"/"+logger_file);
+  CNR_DEBUG(logger_,"starting planners creation");
+
+
   m_nh=ros::NodeHandle(ns);
 
 
-  if (!m_nh.getParam("default_planner_config",m_default_planner_config))
+
+  std::map<std::string,std::string> planner_map;
+
+  if(not graph::core::get_param(logger_,parameter_namespace_,"group_names_map",planner_map))
   {
-    ROS_DEBUG("default planning config not set");
-    m_default_planner_config="";
+    CNR_WARN(logger_,"group_names_map planning config not set");
+    return false;
   }
 
   m_nh.getParam("group_names_map",planner_map);
+
+  CNR_INFO(logger_,"creating " << planner_map.size() << " planners: ");
+
   for (std::pair<std::string,std::string> p: planner_map)
   {
 
-    inheritConfig(m_nh,p.first);
+    //inheritConfig(m_nh,p.first);
 
-    std::string type;
-    if (!m_nh.getParam(ns+"/"+p.first+"/type",type))
-    {
-      ROS_WARN_STREAM(ns+"/"+p.first+"/type is not set, skip this planner");
-      continue;
-    }
+    CNR_INFO(logger_,"creating planner " << p.first << " for gruop "<<p.second << " usign configuration " << parameter_namespace_+"/"+p.first);
 
-    std::shared_ptr<planning_interface::PlanningContext> ptr;
-    if (!type.compare("Multigoal"))
+
+    std::shared_ptr<GraphPlanner> ptr;
+    ptr= std::make_shared<GraphPlanner>(parameter_namespace_+"/"+p.first,p.second,model,logger_);
+    if (ptr->init())
     {
-      ptr= std::make_shared<MultigoalPlanner>(ns+"/"+p.first,p.second,model);
+      CNR_INFO(logger_,"Planned Id=%s on group %s",p.first.c_str(),p.second.c_str());
+      m_planners.insert(std::pair<std::string, std::shared_ptr<GraphPlanner>>(p.first,ptr));
     }
     else
     {
-      ROS_WARN_STREAM(ns+"/"+p.first+"/type is '"<<type<<"'. Available ones are: Multigoal. Skip this planner");
-      continue;
+      CNR_ERROR(logger_,"Planned Id=%s on group %s fails during initialization, skip it",p.first.c_str(),p.second.c_str());
     }
-    ROS_INFO("Planned Id=%s on group %s",p.first.c_str(),p.second.c_str());
-    m_planners.insert(std::pair<std::string, std::shared_ptr<planning_interface::PlanningContext>>(p.first,ptr));
+  }
+
+  if (m_planners.size()==0)
+  {
+    CNR_ERROR(logger_,"no planner availables");
+    return false;
+  }
+
+  if(not graph::core::get_param(logger_,parameter_namespace_,"default_planner_config",m_default_planner_config))
+  {
+    m_default_planner_config=planner_map.begin()->first;
+    CNR_WARN(logger_,"default planning config not set, using " << m_default_planner_config);
+    return false;
   }
   return true;
 }
 
-bool PathPlanerManager::canServiceRequest(const moveit_msgs::MotionPlanRequest& req) const
+bool GraphPlannerManager::canServiceRequest(const moveit_msgs::MotionPlanRequest& req) const
 {
   bool ok=false;
   for (std::pair<std::string, std::shared_ptr<planning_interface::PlanningContext>> planner: m_planners)
@@ -117,7 +158,7 @@ bool PathPlanerManager::canServiceRequest(const moveit_msgs::MotionPlanRequest& 
 }
 
 
-planning_interface::PlanningContextPtr PathPlanerManager::getPlanningContext(
+planning_interface::PlanningContextPtr GraphPlannerManager::getPlanningContext(
   const planning_scene::PlanningSceneConstPtr &planning_scene,
   const planning_interface::MotionPlanRequest &req,
   moveit_msgs::MoveItErrorCodes &error_code) const
@@ -188,13 +229,13 @@ planning_interface::PlanningContextPtr PathPlanerManager::getPlanningContext(
 }
 
 
-void PathPlanerManager::getPlanningAlgorithms ( std::vector< std::string >& algs ) const
+void GraphPlannerManager::getPlanningAlgorithms ( std::vector< std::string >& algs ) const
 {
   for (std::pair<std::string, std::shared_ptr<planning_interface::PlanningContext>> planner: m_planners)
     algs.push_back(planner.first);
 }
 
-void PathPlanerManager::setPlannerConfigurations ( const planning_interface::PlannerConfigurationMap& pcs )
+void GraphPlannerManager::setPlannerConfigurations ( const planning_interface::PlannerConfigurationMap& pcs )
 {
   planning_interface::PlannerManager::setPlannerConfigurations ( pcs );
 }
