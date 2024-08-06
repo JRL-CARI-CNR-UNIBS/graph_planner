@@ -1,6 +1,6 @@
 #pragma once
 /*
-Copyright (c) 2019, Manuel Beschi CNR-STIIMA manuel.beschi@stiima.cnr.it
+Copyright (c) 2024, Manuel Beschi UNIBS manuel.beschi@unibs.it
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -37,10 +37,11 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <graph_core/plugins/metrics/metrics_base_plugin.h>
 #include <graph_core/plugins/metrics/hamp_metrics_base_plugin.h>
+#include <graph_core/plugins/metrics/goal_cost_function_base_plugin.h>
+#include <graph_core/plugins/metrics/hamp_goal_cost_function_base_plugin.h>
 #include <graph_core/plugins/samplers/sampler_base_plugin.h>
 #include <graph_core/plugins/collision_checkers/collision_checker_base_plugin.h>
 #include <graph_core/plugins/solvers/tree_solver_plugin.h>
-#include <graph_core/plugins/metrics/goal_cost_function_base_plugin.h>
 #include <moveit_collision_checker/plugins/collision_checkers/moveit_collision_checker_base_plugin.h>
 #include <graph_display/graph_display.h>
 
@@ -53,76 +54,108 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 namespace graph {
 namespace planner {
 
+/**
+ * @class GraphPlanner
+ * @brief The GraphPlanner class implements a planning context using graph_core.
+ */
 class GraphPlanner: public planning_interface::PlanningContext
 {
 public:
+  /**
+   * @brief Constructor for the GraphPlanner class.
+   * @param name The name of the planning context.
+   * @param group The name of the planning group.
+   * @param model The robot model pointer.
+   * @param logger The logger pointer.
+   */
   GraphPlanner ( const std::string& name,
                      const std::string& group,
                      const moveit::core::RobotModelConstPtr& model,
                      const cnr_logger::TraceLoggerPtr& logger
                      );
 
-
+  /**
+   * @brief Initialize the GraphPlanner.
+   * @return True if initialization is successful, false otherwise.
+   */
   bool init();
 
+  /**
+   * @brief Solve the motion planning problem.
+   * @param res The motion plan response.
+   * @return True if planning is successful, false otherwise.
+   */
   virtual bool solve(planning_interface::MotionPlanResponse& res) override;
+
+  /**
+   * @brief Solve the motion planning problem with detailed response.
+   * @param res The motion plan detailed response.
+   * @return True if planning is successful, false otherwise.
+   */
   virtual bool solve(planning_interface::MotionPlanDetailedResponse& res) override;
 
-  /** \brief If solve() is running, terminate the computation. Return false if termination not possible. No-op if
-   * solve() is not running (returns true).*/
+  /**
+   * @brief Terminate the ongoing solve process.
+   * @return False if termination is not possible, true if solve() is not running or termination is successful.
+   */
   virtual bool terminate() override;
 
-  /** \brief Clear the data structures used by the planner */
+  /**
+   * @brief Clear the planner's data structures.
+   */
   virtual void clear() override;
 
-  void humanCb(const geometry_msgs::PoseArrayConstPtr& msg);
+  /**
+   * @brief Callback for receiving human pose messages.
+   * @param msg The received message containing human poses.
+   */
+  void humanPoseCb(const geometry_msgs::PoseArrayConstPtr& msg);
+//  void humanVelocityCb(const geometry_msgs::TwistArrayConstPtr& msg);
+
+
 
 protected:
-  moveit::core::RobotModelConstPtr robot_model_;
-  //planning_scene::PlanningSceneConstPtr pl
-  ros::NodeHandle m_nh;
-  std::shared_ptr<graph::display::Display> display_;
+  moveit::core::RobotModelConstPtr robot_model_; ///< The robot model pointer.
+  ros::NodeHandle nh_; ///< ROS node handle.
+  std::shared_ptr<graph::display::Display> display_; ///< Display pointer for visualization.
 
-  graph_duration m_max_refining_time;
-  ros::CallbackQueue m_queue;
+  graph_duration max_refining_time_; ///< Maximum refining time duration.
+  ros::CallbackQueue queue_; ///< ROS callback queue.
 
-  unsigned int m_dof;
-  std::vector<std::string> joint_names_;
-  Eigen::VectorXd m_lb;
-  Eigen::VectorXd m_ub;
-  Eigen::VectorXd m_max_speed_;
-  Eigen::VectorXd m_scale;
-  std::string group_;
-  bool display_flag_=false;
-  bool display_tree_=false;
-  graph_duration display_tree_period_;
+  unsigned int dof_; ///< Degrees of freedom.
+  std::vector<std::string> joint_names_; ///< Joint names.
+  Eigen::VectorXd lower_bounds_; ///< Lower bounds for joint limits.
+  Eigen::VectorXd upper_bounds_; ///< Upper bounds for joint limits.
+  Eigen::VectorXd max_speed_; ///< Maximum joint speeds.
+  Eigen::VectorXd scale_; ///< Scaling factors.
+  std::string group_; ///< Planning group name.
 
-  graph::collision_check::MoveitCollisionCheckerPtr checker_;
-  graph::core::SamplerPtr sampler_;
-  graph::core::TreeSolverPtr solver_;
-  graph::core::MetricsPtr metrics_;
-  graph::core::HampMetricsPtr hamp_metrics_;
-  graph::core::GoalCostFunctionPtr goal_cost_fcn_;
+  graph::collision_check::MoveitCollisionCheckerPtr checker_; ///< Collision checker pointer.
+  graph::core::SamplerPtr sampler_; ///< Sampler pointer.
+  graph::core::TreeSolverPtr solver_; ///< Solver pointer.
+  graph::core::MetricsPtr metrics_; ///< Metrics pointer.
+  graph::core::HampMetricsPtr hamp_metrics_; ///< HAMP metrics pointer.
+  graph::core::GoalCostFunctionPtr goal_cost_fcn_; ///< Goal cost function pointer.
+  graph::core::HampGoalCostFunctionPtr hamp_goal_cost_fcn_; ///< HAMP goal cost function pointer.
 
+  ros::Subscriber human_poses_sub_; ///< Subscriber for human pose messages.
+  ros::Publisher solver_performance_; ///< Publisher for solver performance.
 
-  ros::Subscriber m_centroid_sub;
-  ros::Publisher m_solver_performance;
+  bool is_running_ = false; ///< Flag indicating if the planner is running.
+  bool stop_ = false; ///< Flag to stop the planner.
+  bool hamp_ = false; ///< Flag indicating if HAMP is used.
 
-  double collision_distance_=0.04;
-  double collision_thread_=5;
-  bool m_is_running=false;
-  bool m_stop=false;
-  bool hamp_=false;
+  cnr_logger::TraceLoggerPtr logger_; ///< Logger pointer.
 
+  cnr_class_loader::MultiLibraryClassLoader loader_; ///< Multi-library class loader.
+  std::string parameter_namespace_; ///< Parameter namespace.
+  std::string checker_name_; ///< Checker name.
+  std::string sampler_name_; ///< Sampler name.
 
-  cnr_logger::TraceLoggerPtr logger_;
-  std::string parameter_namespace_;
-  std::string checker_name_;
-  std::string sampler_name_;
-
-  cnr_class_loader::MultiLibraryClassLoader loader_;
-
+  bool display_flag_ = false; ///< Display flag.
+  bool display_tree_ = false; ///< Display tree flag.
+  graph_duration display_tree_period_; ///< Display tree period.
 };
 
-}
-}
+} // namespace planner
+} // namespace graph

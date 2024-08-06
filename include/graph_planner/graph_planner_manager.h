@@ -1,6 +1,6 @@
 #pragma once
 /*
-Copyright (c) 2019, Manuel Beschi CNR-STIIMA manuel.beschi@stiima.cnr.it
+Copyright (c) 2024, Manuel Beschi UNIBS manuel.beschi@unibs.it
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -36,7 +36,8 @@ namespace planner {
 class GraphPlannerManager : public planning_interface::PlannerManager
 {
 public:
-  virtual bool initialize(const robot_model::RobotModelConstPtr& model, const std::string& ns) override;
+  virtual bool initialize(const robot_model::RobotModelConstPtr& model,
+                          const std::string& ns) override;
   std::string getDescription() const override
   {
     return "CARI Motion planner";
@@ -59,19 +60,18 @@ public:
 
 
 protected:
-  ros::NodeHandle m_nh;
 
-  std::map< std::string, std::shared_ptr<GraphPlanner>> m_planners;
-  moveit::core::RobotModelConstPtr m_robot_model;
-  std::string m_default_planner_config;
+  std::map< std::string, std::shared_ptr<GraphPlanner>> planners_;
+  moveit::core::RobotModelConstPtr robot_model_;
+  std::string default_planner_config_;
 
   cnr_logger::TraceLoggerPtr logger_;
 
   std::string parameter_namespace_;
 };
 
-//
 
-}
-}
+} // end namespace planner
+} // end namespace graph
+
 

@@ -33,32 +33,6 @@ PLUGINLIB_EXPORT_CLASS(graph::planner::GraphPlannerManager, planning_interface::
 namespace graph {
 namespace planner {
 
-XmlRpc::XmlRpcValue inheritConfig(ros::NodeHandle& nh,const std::string& config_name)
-{
-  XmlRpc::XmlRpcValue config;
-  if (not  nh.getParam(config_name,config))
-  {
-    throw std::invalid_argument(config_name+" does not exist");
-  }
-
-  if (not config.hasMember("inherit_from"))
-    return config;
-
-  XmlRpc::XmlRpcValue parent_config=inheritConfig(nh,config["inherit_from"]);
-
-  for (XmlRpc::XmlRpcValue::ValueStruct::const_iterator it=parent_config.begin();it!=parent_config.end();it++)
-  {
-    std::string key=it->first;
-    if (not config.hasMember(key))
-    {
-      config[key]=it->second;
-    }
-  }
-
-  nh.setParam(config_name,config);
-
-  return config;
-}
 
 bool GraphPlannerManager::initialize(const moveit::core::RobotModelConstPtr& model, const std::string& ns)
 {
@@ -67,8 +41,7 @@ bool GraphPlannerManager::initialize(const moveit::core::RobotModelConstPtr& mod
   std::string package_path = ros::package::getPath(package_name);
   std::string logger_file="config/logger_param.yaml";
   cnr_logger::TraceLoggerPtr tmp_logger = std::make_shared<cnr_logger::TraceLogger>("graph_planner",package_path+"/"+logger_file);
-
-  CNR_INFO(tmp_logger,"Creating logger for this scene");
+  CNR_TRACE(tmp_logger,"Creating logger for this scene");
 
   parameter_namespace_=ns;
 
@@ -86,12 +59,10 @@ bool GraphPlannerManager::initialize(const moveit::core::RobotModelConstPtr& mod
 
   package_path = ros::package::getPath(package_name);
 
-  CNR_INFO(tmp_logger,"creating logger " << package_name << " using config from "<<package_path+"/"+logger_file);
+  CNR_TRACE(tmp_logger,"creating logger " << package_name << " using config from "<<package_path+"/"+logger_file);
   logger_ = std::make_shared<cnr_logger::TraceLogger>(package_name,package_path+"/"+logger_file);
   CNR_DEBUG(logger_,"starting planners creation");
 
-
-  m_nh=ros::NodeHandle(ns);
 
 
 
@@ -125,25 +96,25 @@ bool GraphPlannerManager::initialize(const moveit::core::RobotModelConstPtr& mod
     CNR_DEBUG(logger_,"created planner " << p << " for group "<<group << " using configuration " << parameter_namespace_+"/"+p);
     if (ptr->init())
     {
-      m_planners.insert(std::pair<std::string, std::shared_ptr<GraphPlanner>>(p,ptr));
-      CNR_DEBUG(logger_,"Planner Id=%s on group %s",p.c_str(),group.c_str());
+      planners_.insert(std::pair<std::string, std::shared_ptr<GraphPlanner>>(p,ptr));
+      CNR_INFO(logger_,"Planner Id=%s on group %s",p.c_str(),group.c_str());
     }
     else
     {
-      CNR_DEBUG(logger_,"Planner Id=%s on group %s fails during initialization, skip it",p.c_str(),group.c_str());
+      CNR_WARN(logger_,"Planner Id=%s on group %s fails during initialization, skip it",p.c_str(),group.c_str());
     }
   }
 
-  if (m_planners.size()==0)
+  if (planners_.size()==0)
   {
     CNR_ERROR(logger_,"no planner availables");
     return false;
   }
 
-  if(not graph::core::get_param(logger_,parameter_namespace_,"default_planner_config",m_default_planner_config))
+  if(not graph::core::get_param(logger_,parameter_namespace_,"default_planner_config",default_planner_config_))
   {
-    m_default_planner_config=planner_map.front();
-    CNR_WARN(logger_,"default planning config not set, using " << m_default_planner_config);
+    default_planner_config_=planner_map.front();
+    CNR_WARN(logger_,"default planning config not set, using " << default_planner_config_);
     return true;
   }
   return true;
@@ -152,11 +123,11 @@ bool GraphPlannerManager::initialize(const moveit::core::RobotModelConstPtr& mod
 bool GraphPlannerManager::canServiceRequest(const moveit_msgs::MotionPlanRequest& req) const
 {
   bool ok=false;
-  for (std::pair<std::string, std::shared_ptr<planning_interface::PlanningContext>> planner: m_planners)
+  for (std::pair<std::string, std::shared_ptr<planning_interface::PlanningContext>> planner: planners_)
   {
     if (!planner.second->getGroupName().compare(req.group_name))
     {
-      ROS_INFO("Planned Id=%s can be used for group %s",planner.first.c_str(),req.group_name.c_str());
+      CNR_INFO(logger_,"Planned Id=%s can be used for group %s",planner.first.c_str(),req.group_name.c_str());
       ok=true;
     }
   }
@@ -173,27 +144,27 @@ planning_interface::PlanningContextPtr GraphPlannerManager::getPlanningContext(
   std::string planner_id;
   if (req.planner_id.size()==0)
   {
-    if (m_default_planner_config.size()==0)
+    if (default_planner_config_.size()==0)
     {
-      ROS_DEBUG("Search a planner for group %s",req.group_name.c_str());
+      CNR_DEBUG(logger_,"Search a planner for group %s",req.group_name.c_str());
       any_planner=true;
     }
     else
     {
-      ROS_DEBUG("Use default planner %s",m_default_planner_config.c_str());
-      planner_id=m_default_planner_config;
+      CNR_DEBUG(logger_,"Use default planner %s",default_planner_config_.c_str());
+      planner_id=default_planner_config_;
     }
   }
   else
   {
-    ROS_DEBUG("Search planner %s for group %s",req.planner_id.c_str(),req.group_name.c_str());
+    CNR_DEBUG(logger_,"Search planner %s for group %s",req.planner_id.c_str(),req.group_name.c_str());
     planner_id=req.planner_id;
   }
 
   bool ok=false;
-  for (std::pair<std::string, std::shared_ptr<planning_interface::PlanningContext>> planner: m_planners)
+  for (std::pair<std::string, std::shared_ptr<planning_interface::PlanningContext>> planner: planners_)
   {
-    ROS_DEBUG("planner %s for group %s",planner.first.c_str(),planner.second->getGroupName().c_str());
+    CNR_DEBUG(logger_,"planner %s for group %s",planner.first.c_str(),planner.second->getGroupName().c_str());
     if (!planner.second->getGroupName().compare(req.group_name))
     {
       if (any_planner)
@@ -204,29 +175,29 @@ planning_interface::PlanningContextPtr GraphPlannerManager::getPlanningContext(
       }
       else if (!planner.first.compare(planner_id))
       {
-        ROS_DEBUG("Planned Id=%s can be used for group %s",planner.first.c_str(),req.group_name.c_str());
+        CNR_DEBUG(logger_,"Planned Id=%s can be used for group %s",planner.first.c_str(),req.group_name.c_str());
         ok=true;
       }
     }
   }
   if (!ok)
   {
-    ROS_ERROR("Planner %s not found for group %s.", planner_id.c_str(), req.group_name.c_str());
-    ROS_ERROR("Available planners are:\n");
-    for (std::pair<std::string, std::shared_ptr<planning_interface::PlanningContext>> planner: m_planners)
-      ROS_ERROR("- planner %s, group  %s",planner.first.c_str(),planner.second->getGroupName().c_str());
+    CNR_ERROR(logger_,"Planner %s not found for group %s.", planner_id.c_str(), req.group_name.c_str());
+    CNR_ERROR(logger_,"Available planners are:\n");
+    for (std::pair<std::string, std::shared_ptr<planning_interface::PlanningContext>> planner: planners_)
+      CNR_ERROR(logger_,"- planner %s, group  %s",planner.first.c_str(),planner.second->getGroupName().c_str());
     return nullptr;
   }
 
-  std::shared_ptr<planning_interface::PlanningContext> planner = m_planners.at(planner_id);
+  std::shared_ptr<planning_interface::PlanningContext> planner = planners_.at(planner_id);
   if (!planner)
   {
-    ROS_ERROR("Planner not found");
+    CNR_ERROR(logger_,"Planner not found");
     return planner;
   }
   else
   {
-    ROS_INFO("Using  planner %s for planning on the group %s",planner->getName().c_str(),req.group_name.c_str());
+    CNR_INFO(logger_,"Using  planner %s for planning on the group %s",planner->getName().c_str(),req.group_name.c_str());
   }
 
   planner->setPlanningScene(planning_scene);
@@ -237,7 +208,7 @@ planning_interface::PlanningContextPtr GraphPlannerManager::getPlanningContext(
 
 void GraphPlannerManager::getPlanningAlgorithms ( std::vector< std::string >& algs ) const
 {
-  for (std::pair<std::string, std::shared_ptr<planning_interface::PlanningContext>> planner: m_planners)
+  for (std::pair<std::string, std::shared_ptr<planning_interface::PlanningContext>> planner: planners_)
     algs.push_back(planner.first);
 }
 
@@ -247,6 +218,7 @@ void GraphPlannerManager::setPlannerConfigurations ( const planning_interface::P
 }
 
 
+} // end namespace planner
+} // end namespace graph
 
-}
-}
+

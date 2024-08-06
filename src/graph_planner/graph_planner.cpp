@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2019, Manuel Beschi CNR-STIIMA manuel.beschi@stiima.cnr.it
+Copyright (c) 2024, Manuel Beschi UNIBS manuel.beschi@unibs.it
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -28,7 +28,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <graph_planner/graph_planner.h>
 #include <thread>
-using namespace std::literals::chrono_literals;
+
 
 namespace graph {
 namespace planner {
@@ -44,8 +44,8 @@ GraphPlanner::GraphPlanner (const std::string& name,
   loader_(true)
 {
   parameter_namespace_=name;
-  m_nh=ros::NodeHandle(name);
-  m_nh.setCallbackQueue(&m_queue);
+  nh_=ros::NodeHandle(name);
+  nh_.setCallbackQueue(&queue_);
   display_tree_period_=graph_duration(1.0);
 }
 
@@ -67,23 +67,23 @@ bool GraphPlanner::init()
 
 
   joint_names_=jmg->getActiveJointModelNames();
-  m_dof=joint_names_.size();
-  m_lb.resize(m_dof);
-  m_ub.resize(m_dof);
-  m_max_speed_.resize(m_dof);
-  m_scale.resize(m_dof);
-  m_scale.setOnes();
+  dof_=joint_names_.size();
+  lower_bounds_.resize(dof_);
+  upper_bounds_.resize(dof_);
+  max_speed_.resize(dof_);
+  scale_.resize(dof_);
+  scale_.setOnes();
 
-  for (unsigned int idx=0;idx<m_dof;idx++)
+  for (unsigned int idx=0;idx<dof_;idx++)
   {
     const robot_model::VariableBounds& bounds = robot_model_->getVariableBounds(joint_names_.at(idx));
     if (bounds.position_bounded_)
     {
-      m_lb(idx)=bounds.min_position_;
-      m_ub(idx)=bounds.max_position_;
-      m_max_speed_(idx)=bounds.max_velocity_;
+      lower_bounds_(idx)=bounds.min_position_;
+      upper_bounds_(idx)=bounds.max_position_;
+      max_speed_(idx)=bounds.max_velocity_;
     }
-    CNR_TRACE(logger_," joint " << joint_names_.at(idx) << " bounds: upper = " << m_ub(idx) << " lower = " << m_lb(idx) << " velocity = " << m_max_speed_(idx));
+    CNR_TRACE(logger_," joint " << joint_names_.at(idx) << " bounds: upper = " << upper_bounds_(idx) << " lower = " << lower_bounds_(idx) << " velocity = " << max_speed_(idx));
   }
 
 
@@ -91,7 +91,7 @@ bool GraphPlanner::init()
   urdf_model.initParam("robot_description");
 
 
-  if(not graph::core::get_param(logger_,parameter_namespace_,"display_bubbles",display_flag_))
+  if(not graph::core::get_param(logger_,parameter_namespace_,"display_path",display_flag_))
   {
     CNR_DEBUG(logger_,"display_flag is not set, default=false");
     display_flag_=false;
@@ -156,6 +156,16 @@ bool GraphPlanner::init()
     hamp_metrics_plugin->init(parameter_namespace_,logger_);
     hamp_metrics_ = hamp_metrics_plugin->getMetrics();
     CNR_TRACE(logger_,"CREATED HAMP METRICS");
+
+    if(not graph::core::get_param(logger_,parameter_namespace_,"hamp_metrics_plugin",class_name))
+    {
+      CNR_ERROR(logger_,"hamp_metrics_plugin is not set");
+      return false;
+    }
+    std::shared_ptr<graph::core::HampGoalCostFunctionBasePlugin> hamp_goal_cost_plugin = loader_.createInstance<graph::core::HampGoalCostFunctionBasePlugin>(class_name);
+    hamp_goal_cost_plugin->init(parameter_namespace_,logger_);
+    hamp_goal_cost_fcn_ = hamp_goal_cost_plugin->getCostFunction();
+    CNR_TRACE(logger_,"CREATED HAMP GOAL COST FUNCTION");
   }
   else
   {
@@ -180,11 +190,11 @@ bool GraphPlanner::init()
 
   std::shared_ptr<graph::core::SamplerBasePlugin> sampler_plugin = loader_.createInstance<graph::core::SamplerBasePlugin>(sampler_name_);
   sampler_plugin->init(parameter_namespace_,
-                       m_lb,
-                       m_ub,
-                       m_lb,
-                       m_ub,
-                       m_ub-m_lb,
+                       lower_bounds_,
+                       upper_bounds_,
+                       lower_bounds_,
+                       upper_bounds_,
+                       upper_bounds_-lower_bounds_,
                        logger_);
   sampler_ = sampler_plugin->getSampler();
 
@@ -239,9 +249,19 @@ bool GraphPlanner::init()
     CNR_DEBUG(logger_,"refining_time is not set, default=30 seconds");
     refining_time=30;
   }
-  m_max_refining_time=graph_duration(refining_time);
+  max_refining_time_=graph_duration(refining_time);
 
-  m_solver_performance=m_nh.advertise<std_msgs::Float64MultiArray>("/solver_performance",1000);
+  solver_performance_=nh_.advertise<std_msgs::Float64MultiArray>("/solver_performance",1000);
+
+  human_poses_sub_=nh_.subscribe("human_poses",
+                                  1,
+                                  &GraphPlanner::humanPoseCb,
+                                  this);
+//  human_vel_sub_=m_nh.subscribe("human_velocities",
+//                                1,
+//                                &GraphPlanner::humanVelocityCb,
+//                                this);
+
 
   CNR_TRACE(logger_,"created CARI planner");
 
@@ -289,7 +309,7 @@ bool GraphPlanner::solve ( planning_interface::MotionPlanDetailedResponse& res )
   graph_duration max_planning_time=graph_duration(request_.allowed_planning_time);
   graph_time_point start_time = graph_time::now();
   graph_time_point refine_time = graph_time::now();
-  m_is_running=true;
+  is_running_=true;
 
   std_msgs::Float64MultiArray performace_msg;
   performace_msg.layout.dim.resize(4);
@@ -299,20 +319,20 @@ bool GraphPlanner::solve ( planning_interface::MotionPlanDetailedResponse& res )
   performace_msg.layout.dim.at(1).size=1;
   performace_msg.layout.dim.at(2).label="cost";
   performace_msg.layout.dim.at(2).size=1;
-  performace_msg.layout.dim.at(3).label=m_nh.getNamespace();
+  performace_msg.layout.dim.at(3).label=parameter_namespace_;
   performace_msg.layout.dim.at(3).size=0;
 
   if (!planning_scene_)
   {
     CNR_ERROR(logger_,"No planning scene available");
     res.error_code_.val=moveit_msgs::MoveItErrorCodes::COLLISION_CHECKING_UNAVAILABLE;
-    m_is_running=false;
+    is_running_=false;
     return false;
   }
 
 
 
-  if (display_flag_ || display_tree_)
+  if (display_tree_)
   {
     if (!display_)
     {
@@ -361,7 +381,7 @@ bool GraphPlanner::solve ( planning_interface::MotionPlanDetailedResponse& res )
     }
     CNR_FATAL(logger_,"Start point is  Out of bound");
     res.error_code_.val=moveit_msgs::MoveItErrorCodes::START_STATE_IN_COLLISION;
-    m_is_running=false;
+    is_running_=false;
     return false;
   }
 
@@ -390,7 +410,7 @@ bool GraphPlanner::solve ( planning_interface::MotionPlanDetailedResponse& res )
       CNR_FATAL(logger_,"you shouldn't be here!");
     }
     res.error_code_.val=moveit_msgs::MoveItErrorCodes::START_STATE_IN_COLLISION;
-    m_is_running=false;
+    is_running_=false;
     return false;
   }
   solver_->resetProblem();
@@ -402,11 +422,11 @@ bool GraphPlanner::solve ( planning_interface::MotionPlanDetailedResponse& res )
   {
     CNR_ERROR(logger_,"unable to add start to solver");
     res.error_code_.val=moveit_msgs::MoveItErrorCodes::START_STATE_INVALID;
-    m_is_running=false;
+    is_running_=false;
     return false;
   }
 
-  m_queue.callAvailable();
+  queue_.callAvailable();
   bool at_least_a_goal=false;
 
 
@@ -500,7 +520,7 @@ bool GraphPlanner::solve ( planning_interface::MotionPlanDetailedResponse& res )
   {
     CNR_ERROR(logger_,"All goals are in collision");
     res.error_code_.val=moveit_msgs::MoveItErrorCodes::GOAL_IN_COLLISION;
-    m_is_running=false;
+    is_running_=false;
     return false;
   }
 
@@ -508,9 +528,9 @@ bool GraphPlanner::solve ( planning_interface::MotionPlanDetailedResponse& res )
   sampler_plugin->init(parameter_namespace_,
                        start_conf,
                        goal_configuration,
-                       m_lb,
-                       m_ub,
-                       m_scale,
+                       lower_bounds_,
+                       upper_bounds_,
+                       scale_,
                        logger_,
                        solver_->getCost());
   sampler_ = sampler_plugin->getSampler();
@@ -545,11 +565,11 @@ bool GraphPlanner::solve ( planning_interface::MotionPlanDetailedResponse& res )
       }
     }
     iteration++;
-    if (m_stop)
+    if (stop_)
     {
       CNR_INFO(logger_,"Externally stopped");
       res.error_code_.val=moveit_msgs::MoveItErrorCodes::PREEMPTED;
-      m_is_running=false;
+      is_running_=false;
       return false;
     }
 
@@ -569,7 +589,7 @@ bool GraphPlanner::solve ( planning_interface::MotionPlanDetailedResponse& res )
       break;
     }
 
-    if (found_a_solution && ((graph_time::now()-refine_time)>m_max_refining_time))
+    if (found_a_solution && ((graph_time::now()-refine_time)>max_refining_time_))
     {
       CNR_INFO(logger_,"Refine time expired (cost=%f) in %f seconds (%u iterations)",solver_->cost(),toSeconds(graph_time::now(),start_time),iteration);
       break;
@@ -577,14 +597,14 @@ bool GraphPlanner::solve ( planning_interface::MotionPlanDetailedResponse& res )
   }
 
 
-  m_solver_performance.publish( performace_msg);
+  solver_performance_.publish( performace_msg);
 
   if (!found_a_solution)
   {
     CNR_ERROR(logger_,"unable to find a valid path");
     res.error_code_.val=moveit_msgs::MoveItErrorCodes::PLANNING_FAILED;
-    m_is_running=false;
-    if (display_flag_)
+    is_running_=false;
+    if (display_tree_)
       display_->displayTree(solver_->getStartTree());
     return false;
   }
@@ -615,7 +635,7 @@ bool GraphPlanner::solve ( planning_interface::MotionPlanDetailedResponse& res )
   res.trajectory_.push_back(trj);
 
   res.error_code_.val=moveit_msgs::MoveItErrorCodes::SUCCESS;
-  m_is_running=false;
+  is_running_=false;
 
   return true;
 }
@@ -637,13 +657,13 @@ bool GraphPlanner::solve ( planning_interface::MotionPlanResponse& res )
 
 bool GraphPlanner::terminate()
 {
-  m_stop=true;
+  stop_=true;
   graph_time_point t0=graph_time::now();
   graph_duration period(20ms);
   graph_duration timeout(5s);
   while (ros::ok())
   {
-    if (!m_is_running)
+    if (!is_running_)
       return true;
     if ((graph_time::now()-t0)>timeout)
     {
@@ -655,28 +675,27 @@ bool GraphPlanner::terminate()
   return false;
 }
 
-void GraphPlanner::humanCb(const geometry_msgs::PoseArrayConstPtr& msg)
+void GraphPlanner::humanPoseCb(const geometry_msgs::PoseArrayConstPtr& msg)
 {
 
   if (!hamp_)
     return;
-  //  if (use_avoidance_goal_)
-  //    goal_cost_fcn_->cleanPoints();
-  //  if (use_avoidance_metrics_)
-  //    avoidance_metrics_->cleanPoints();
-  Eigen::Vector3d point;
-  for (const geometry_msgs::Pose& p: msg->poses)
+
+
+
+  Eigen::Matrix<double,3,-1> human_positions(3,msg->poses.size());
+
+  for (size_t ic=0;ic<msg->poses.size();ic++)
   {
-    point(0)=p.position.x;
-    point(1)=p.position.y;
-    point(2)=p.position.z;
-    //    if (use_avoidance_goal_)
-    //      goal_cost_fcn_->addPoint(point);
-    //    ros::Duration(0.1).sleep();
-    //    if (use_avoidance_metrics_)
-    //      avoidance_metrics_->addPoint(point);
+    const geometry_msgs::Pose& p=msg->poses.at(ic);
+    human_positions(0,ic)=p.position.x;
+    human_positions(1,ic)=p.position.y;
+    human_positions(2,ic)=p.position.z;
+    if (hamp_metrics_)
+      hamp_metrics_->setHumanPositions(human_positions);
+    if (hamp_goal_cost_fcn_)
+      hamp_goal_cost_fcn_->setHumanPositions(human_positions);
   }
-  //  goal_cost_fcn_->publishPoints();
 }
 
 

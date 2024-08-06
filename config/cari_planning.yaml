@@ -1,0 +1,91 @@
+# Copyright (c) 2019, Manuel Beschi CNR-STIIMA manuel.beschi@stiima.cnr.it
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#     * Redistributions of source code must retain the above copyright
+#       notice, this list of conditions and the following disclaimer.
+#     * Redistributions in binary form must reproduce the above copyright
+#       notice, this list of conditions and the following disclaimer in the
+#       documentation and/or other materials provided with the distribution.
+#     * Neither the name of the <organization> nor the
+#       names of its contributors may be used to endorse or promote products
+#       derived from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+# WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL <COPYRIGHT HOLDER> BE LIABLE FOR ANY
+# DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+# (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+# LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+# ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+#
+#
+#
+#
+#__  .___  ___. .______     ______   .______     .___________.    ___      .__   __. .___________.
+#|  | |   \/   | |   _  \   /  __  \  |   _  \    |           |   /   \     |  \ |  | |           |
+#|  | |  \  /  | |  |_)  | |  |  |  | |  |_)  |   `---|  |----`  /  ^  \    |   \|  | `---|  |----`
+#|  | |  |\/|  | |   ___/  |  |  |  | |      /        |  |      /  /_\  \   |  . `  |     |  |
+#|  | |  |  |  | |  |      |  `--'  | |  |\  \----.   |  |     /  _____  \  |  |\   |     |  |
+#|__| |__|  |__| | _|       \______/  | _| `._____|   |__|    /__/     \__\ |__| \__|     |__|
+#
+# ========================================================================
+# THIS IS A TEMPLATE. DON'T MODIFY THIS FILE IN THIS FOLDER.
+# COPY IT IN THE [YOUR_CELL]_moveit_config PACKAGE AND THEN
+# MODIFY THE PARAMETERS WITH THE COMMENT ***CHANGE IT***
+# ========================================================================
+
+move_group:
+  planning_pipelines:
+    cari:
+      package_name: cartesian_moveit_config
+      logger_param_file: "config/logger_param.yaml"
+
+
+      planner_names:
+      - rrt
+      # - awesome_planner # add planners
+      default_planner_config: rrt  # if not specified, the default one is the first in planner_names
+
+      rrt:
+
+        ## Common parameters
+        group_name: group_name  ::warning:: CHANGE IT ::warning::
+
+        # list of libraries containing the plugins
+        libraries: ["libgraph_core.so","libmoveit_collision_checker.so"]
+        solver_plugin: graph::core::RRTPlugin
+        sampler_plugin: graph::core::InformedSamplerPlugin
+        checker_plugin: graph::collision_check::MoveitCollisionCheckerPlugin
+        metrics_plugin: graph::core::EuclideanMetricsPlugin
+        goal_cost_plugin: graph::core::NullGoalCostFunctionPlugin
+
+        use_hamp: false
+        # #if HAMP is used
+        # hamp_metrics_plugin: ::warning:: CHANGE IT ::warning::
+        # hamp_goal_cost_plugin: ::warning:: CHANGE IT ::warning::
+
+        # refine timeout (starts when the first solution is found)
+        max_refine_time: 2.0
+
+
+        display_path: false  # show the final path
+        display_tree: true   # show the tree
+        display_tree_period: 1.0 # period between tree pubblication
+
+        ## Solver parameters (depends on the loaded plugin)
+        utopia_tolerance: 0.05
+        extend: false
+        max_distance: 0.1
+        use_kdtree: true
+
+        # Checker parameters (depends on the loaded plugin)
+        checker_resolution: 0.01
+        parallel_checker_n_threads: 4
+
+
