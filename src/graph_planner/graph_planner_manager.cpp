@@ -95,36 +95,42 @@ bool GraphPlannerManager::initialize(const moveit::core::RobotModelConstPtr& mod
 
 
 
-  std::map<std::string,std::string> planner_map;
+  std::vector<std::string> planner_map;
 
-  if(not graph::core::get_param(logger_,parameter_namespace_,"group_names_map",planner_map))
+  if(not graph::core::get_param(logger_,parameter_namespace_,"planner_names",planner_map))
   {
-    CNR_WARN(logger_,"group_names_map planning config not set");
+    CNR_WARN(logger_,"planner_names not set");
     return false;
   }
 
-  m_nh.getParam("group_names_map",planner_map);
 
   CNR_INFO(logger_,"creating " << planner_map.size() << " planners: ");
 
-  for (std::pair<std::string,std::string> p: planner_map)
+  for (std::string& p: planner_map)
   {
 
     //inheritConfig(m_nh,p.first);
+    std::string group;
+    if(not graph::core::get_param(logger_,parameter_namespace_+"/"+p,"/group_name",group))
+    {
+      CNR_WARN(logger_,"group_name not set for planner "<< p);
+      continue;
+    }
 
-    CNR_INFO(logger_,"creating planner " << p.first << " for gruop "<<p.second << " usign configuration " << parameter_namespace_+"/"+p.first);
+    CNR_INFO(logger_,"creating planner " << p << " for gruop "<<group << " using configuration " << parameter_namespace_+"/"+p);
 
 
     std::shared_ptr<GraphPlanner> ptr;
-    ptr= std::make_shared<GraphPlanner>(parameter_namespace_+"/"+p.first,p.second,model,logger_);
+    ptr= std::make_shared<GraphPlanner>(parameter_namespace_+"/"+p,group,model,logger_);
+    CNR_DEBUG(logger_,"created planner " << p << " for group "<<group << " using configuration " << parameter_namespace_+"/"+p);
     if (ptr->init())
     {
-      CNR_INFO(logger_,"Planned Id=%s on group %s",p.first.c_str(),p.second.c_str());
-      m_planners.insert(std::pair<std::string, std::shared_ptr<GraphPlanner>>(p.first,ptr));
+      m_planners.insert(std::pair<std::string, std::shared_ptr<GraphPlanner>>(p,ptr));
+      CNR_DEBUG(logger_,"Planner Id=%s on group %s",p.c_str(),group.c_str());
     }
     else
     {
-      CNR_ERROR(logger_,"Planned Id=%s on group %s fails during initialization, skip it",p.first.c_str(),p.second.c_str());
+      CNR_DEBUG(logger_,"Planner Id=%s on group %s fails during initialization, skip it",p.c_str(),group.c_str());
     }
   }
 
@@ -136,9 +142,9 @@ bool GraphPlannerManager::initialize(const moveit::core::RobotModelConstPtr& mod
 
   if(not graph::core::get_param(logger_,parameter_namespace_,"default_planner_config",m_default_planner_config))
   {
-    m_default_planner_config=planner_map.begin()->first;
+    m_default_planner_config=planner_map.front();
     CNR_WARN(logger_,"default planning config not set, using " << m_default_planner_config);
-    return false;
+    return true;
   }
   return true;
 }

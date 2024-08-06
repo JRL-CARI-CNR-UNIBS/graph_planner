@@ -51,7 +51,7 @@ GraphPlanner::GraphPlanner (const std::string& name,
 
 bool GraphPlanner::init()
 {
-  CNR_DEBUG(logger_,"create MultigoalPlanner, name =%s, group = %s", parameter_namespace_.c_str(),group_.c_str());
+  CNR_TRACE(logger_,"create CARI planner, name =%s, group = %s", parameter_namespace_.c_str(),group_.c_str());
   if (!robot_model_)
   {
     CNR_ERROR(logger_,"robot model is not initialized");
@@ -107,7 +107,7 @@ bool GraphPlanner::init()
     double display_tree_period;
     if(not graph::core::get_param(logger_,parameter_namespace_,"display_tree_period",display_tree_period))
     {
-      CNR_DEBUG(logger_,"display_tree_rate is not set, default=1.0");
+      CNR_DEBUG(logger_,"display_tree_period is not set, default=1.0");
       display_tree_period=1.0;
     }
     display_tree_period_=graph_duration(display_tree_period);
@@ -202,7 +202,7 @@ bool GraphPlanner::init()
 
   goal_cost_fcn_ = goal_cost_plugin->getCostFunction();
 
-  CNR_DEBUG(logger_,"CREATED GOAL COST FUNCTION");
+  CNR_TRACE(logger_,"CREATED GOAL COST FUNCTION");
 
 
   if(not graph::core::get_param(logger_,parameter_namespace_,"solver_plugin",class_name))
@@ -218,9 +218,7 @@ bool GraphPlanner::init()
                       goal_cost_fcn_,
                       logger_);
 
-
   solver_ = solver_plugin->getSolver();
-
 
   if (!solver_->config(parameter_namespace_)) // metti namespace
   {
@@ -229,31 +227,23 @@ bool GraphPlanner::init()
   }
 
 
-  CNR_DEBUG(logger_,"CREATED SOLVER");
+  CNR_TRACE(logger_,"CREATED SOLVER");
 
 
 
 
-  CNR_DEBUG(logger_,"created MultigoalPlanner");
 
   double refining_time=0;
   if(not graph::core::get_param(logger_,parameter_namespace_,"max_refine_time",refining_time))
   {
-    CNR_DEBUG(logger_,"refining_time is not set, default=30");
+    CNR_DEBUG(logger_,"refining_time is not set, default=30 seconds");
     refining_time=30;
   }
   m_max_refining_time=graph_duration(refining_time);
 
   m_solver_performance=m_nh.advertise<std_msgs::Float64MultiArray>("/solver_performance",1000);
 
-
-  if (display_flag_ || display_tree_)
-  {
-    if (!display_)
-      display_=std::make_shared<graph::display::Display>(planning_scene_,group_);
-    else
-      display_->clearMarkers();
-  }
+  CNR_TRACE(logger_,"created CARI planner");
 
   return true;
 }
@@ -270,8 +260,6 @@ void GraphPlanner::clear()
 
 bool GraphPlanner::solve ( planning_interface::MotionPlanDetailedResponse& res )
 {
-
-
   std::shared_ptr<graph::collision_check::MoveitCollisionCheckerBasePlugin> checker_plugin = loader_.createInstance<graph::collision_check::MoveitCollisionCheckerBasePlugin>(checker_name_);
 
   planning_scene::PlanningScenePtr ptr=planning_scene::PlanningScene::clone(planning_scene_);
@@ -281,12 +269,11 @@ bool GraphPlanner::solve ( planning_interface::MotionPlanDetailedResponse& res )
   checker_ = checker_plugin->getCollisionChecker();
   CNR_TRACE(logger_,"CREATED CHECKER");
 
-
-
   std::vector<const moveit::core::AttachedBody*> attached_body;
   planning_scene_->getCurrentState().getAttachedBodies(attached_body);
 
   solver_->setChecker(checker_);
+  solver_->resetProblem();
   sampler_->setCost(std::numeric_limits<double>::infinity()); // reset sampler
 
   if (attached_body.size()>0)
@@ -328,7 +315,10 @@ bool GraphPlanner::solve ( planning_interface::MotionPlanDetailedResponse& res )
   if (display_flag_ || display_tree_)
   {
     if (!display_)
+    {
       display_=std::make_shared<graph::display::Display>(planning_scene_,group_);
+      display_->clearMarkers();
+    }
     else
       display_->clearMarkers();
   }
@@ -542,7 +532,7 @@ bool GraphPlanner::solve ( planning_interface::MotionPlanDetailedResponse& res )
   while((graph_time::now()-start_time)<max_planning_time)
   {
 
-    performace_msg.data.push_back((graph_time::now()-start_time).count() );
+    performace_msg.data.push_back(toSeconds(graph_time::now(),start_time) );
     performace_msg.data.push_back(iteration);
     performace_msg.data.push_back(solver_->getCost());
 
@@ -567,20 +557,21 @@ bool GraphPlanner::solve ( planning_interface::MotionPlanDetailedResponse& res )
     if (!found_a_solution && solver_->solved())
     {
       assert(solution);
-      CNR_INFO(logger_,"Find a first solution (cost=%f) in %f seconds",solver_->cost(),(graph_time::now()-start_time).count());
+
+      CNR_INFO(logger_,"Find a first solution (cost=%f) in %f seconds",solver_->cost(),toSeconds(graph_time::now(),start_time));
       CNR_DEBUG(logger_,*solver_);
       found_a_solution=true;
       refine_time = graph_time::now();
     }
     if (not solver_->canImprove())
     {
-      CNR_INFO(logger_,"Optimization completed (cost=%f) in %f seconds (%u iterations)",solver_->cost(),(graph_time::now()-start_time).count(),iteration);
+      CNR_INFO(logger_,"Optimization completed (cost=%f) in %f seconds (%u iterations)",solver_->cost(),toSeconds(graph_time::now(),start_time),iteration);
       break;
     }
 
     if (found_a_solution && ((graph_time::now()-refine_time)>m_max_refining_time))
     {
-      CNR_INFO(logger_,"Refine time expired (cost=%f) in %f seconds (%u iterations)",solver_->cost(),(graph_time::now()-start_time).count(),iteration);
+      CNR_INFO(logger_,"Refine time expired (cost=%f) in %f seconds (%u iterations)",solver_->cost(),toSeconds(graph_time::now(),start_time),iteration);
       break;
     }
   }
@@ -602,7 +593,7 @@ bool GraphPlanner::solve ( planning_interface::MotionPlanDetailedResponse& res )
 
   if (solver_->canImprove())
   {
-    CNR_INFO(logger_,"Stopped (cost=%f) after %f seconds (%u iterations)",solver_->cost(),(graph_time::now()-start_time).count(),iteration);
+    CNR_INFO(logger_,"Stopped (cost=%f) after %f seconds (%u iterations)",solver_->cost(),toSeconds(graph_time::now(),start_time),iteration);
   }
 
   // =========================
@@ -618,10 +609,8 @@ bool GraphPlanner::solve ( planning_interface::MotionPlanDetailedResponse& res )
     wp_state.update();
     trj->addSuffixWayPoint(wp_state,0);
   }
-  graph_duration wd = graph_time::now() - start_time;
 
-
-  res.processing_time_.push_back(wd.count());
+  res.processing_time_.push_back(toSeconds(graph_time::now(), start_time));
   res.description_.emplace_back("plan");
   res.trajectory_.push_back(trj);
 
@@ -640,8 +629,7 @@ bool GraphPlanner::solve ( planning_interface::MotionPlanResponse& res )
   {
     res.trajectory_ = detailed_res.trajectory_.at(0);
   }
-  graph_duration wd = graph_time::now() - start_time;
-  res.planning_time_ = wd.count();
+  res.planning_time_ = toSeconds(graph_time::now(),start_time);
   res.error_code_ = detailed_res.error_code_;
 
   return success;
@@ -652,11 +640,12 @@ bool GraphPlanner::terminate()
   m_stop=true;
   graph_time_point t0=graph_time::now();
   graph_duration period(20ms);
+  graph_duration timeout(5s);
   while (ros::ok())
   {
     if (!m_is_running)
       return true;
-    if ((graph_time::now()-t0).count()>5)
+    if ((graph_time::now()-t0)>timeout)
     {
       CNR_ERROR(logger_,"Unable to stop planner %s of group %s",name_.c_str(),group_.c_str());
       return false;
